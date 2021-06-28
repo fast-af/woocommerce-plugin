@@ -5,60 +5,14 @@
  * @package fast
  */
 
+// Add base multicurrency class.
+require_once FASTWC_PATH . 'includes/multicurrency/class-base.php';
 // Add support for Currency Switcher for WooCommerce plugin.
-require_once FASTWC_PATH . 'includes/multicurrency/currency-switcher-woocommerce.php';
+require_once FASTWC_PATH . 'includes/multicurrency/class-currency-switcher-woocommerce.php';
 // Add support for WooCommerce Currency Switcher plugin.
-require_once FASTWC_PATH . 'includes/multicurrency/woocommerce-currency-switcher.php';
+require_once FASTWC_PATH . 'includes/multicurrency/class-woocommerce-currency-switcher.php';
 // Add support for Price Based on Country for WooCommerce plugin.
-require_once FASTWC_PATH . 'includes/multicurrency/woocommerce-product-price-based-on-countries.php';
-
-/**
- * Get a list of multicurrency plugins supported by Fast.
- *
- * @return array
- */
-function fastwc_get_supported_multicurrency_plugins() {
-
-	// List of built-in supported multicurrency plugins.
-	$supported_plugins = array(
-		'currency_switcher_woocommerce'                => 'currency-switcher-woocommerce/currency-switcher-woocommerce.php',
-		'woocommerce_currency_switcher'                => 'woocommerce-currency-switcher/index.php',
-		'woocommerce_product_price_based_on_countries' => 'woocommerce-product-price-based-on-countries/woocommerce-product-price-based-on-countries.php',
-	);
-
-	/**
-	 * Filter the list of supported multicurrency plugins to add
-	 * support for more third-party plugins.
-	 *
-	 * @param array $supported_plugins The list of supported plugins.
-	 */
-	return apply_filters( 'fastwc_supported_multicurrency_plugins', $supported_plugins );
-}
-
-/**
- * Get the active multicurrency plugin or return false if
- * no supported plugins are active.
- *
- * @return mixed
- */
-function fastwc_get_active_multicurrency_plugin() {
-	$multicurrency_plugins = fastwc_get_supported_multicurrency_plugins();
-
-	if ( ! empty( $multicurrency_plugins ) ) {
-		include_once ABSPATH . 'wp-admin/includes/plugin.php';
-
-		// Loop through the list of supported plugins and return the first active one.
-		// This operates under the assumption that there would only be 1 active
-		// multicurrency plugin.
-		foreach ( $multicurrency_plugins as $multicurrency_plugin_slug => $multicurrency_plugin ) {
-			if ( is_plugin_active( $multicurrency_plugin ) ) {
-				return $multicurrency_plugin_slug;
-			}
-		}
-	}
-
-	return false;
-}
+require_once FASTWC_PATH . 'includes/multicurrency/class-woocommerce-product-price-based-on-countries.php';
 
 /**
  * Checks if multicurrency support is disabled.
@@ -89,17 +43,14 @@ function fastwc_maybe_update_order_for_multicurrency( $order, $request ) {
 
 	// Do nothing if multicurrency is disabled.
 	if ( false === $multicurrency_disabled ) {
-		$multicurrency_plugin = fastwc_get_active_multicurrency_plugin();
-
 		$wc_currency    = get_woocommerce_currency();
 		$order_currency = fastwc_get_order_currency( $order );
 
 		if (
-			false !== $multicurrency_plugin // Make sure a supported multicurrency plugin is activated.
-			&& ! empty( $order_currency ) // Make sure the order currency is set.
+			! empty( $order_currency ) // Make sure the order currency is set.
 			&& $wc_currency !== $order_currency // Make sure the order currency is not the default currency.
 		) {
-			$order = fastwc_update_order_for_multicurrency( $order, $request, $multicurrency_plugin );
+			$order = fastwc_update_order_for_multicurrency( $order, $request );
 		}
 	}
 
@@ -124,11 +75,22 @@ function fastwc_get_order_currency( $order ) {
  *
  * @param WC_Data         $order                The order to check.
  * @param WP_REST_Request $request              Request object.
- * @param string          $multicurrency_plugin The name of the multicurrency plugin.
  *
  * @return WC_Data
  */
-function fastwc_update_order_for_multicurrency( $order, $request, $multicurrency_plugin ) {
+function fastwc_update_order_for_multicurrency( $order, $request ) {
+
+	/**
+	 * Maybe update the order from the multicurrency plugin.
+	 *
+	 * @param WC_Data         $order                The order to check.
+	 * @param WP_REST_Request $request              Request object.
+	 */
+	$order = apply_filters(
+		'fastwc_update_order_for_multicurrency',
+		$order,
+		$request
+	);
 
 	foreach ( $order->get_items() as $item_id => $item ) {
 		$product  = method_exists( $item, 'get_product' ) ? $item->get_product() : null;
@@ -144,7 +106,7 @@ function fastwc_update_order_for_multicurrency( $order, $request, $multicurrency
 			 * @param WC_Request $request Request object.
 			 */
 			$price = apply_filters(
-				"fastwc_update_price_for_multicurrency_{$multicurrency_plugin}",
+				'fastwc_update_price_for_multicurrency',
 				$product->get_price(),
 				$product,
 				$order,
@@ -185,30 +147,26 @@ function fastwc_maybe_update_shipping_rate_for_multicurrency( $rate_info, $wc_cu
 	$multicurrency_disabled = fastwc_is_multicurrency_support_disabled();
 
 	// Do nothing if multicurrency is disabled.
-	if ( false === $multicurrency_disabled ) {
-		$multicurrency_plugin = fastwc_get_active_multicurrency_plugin();
-
-		if (
-			false !== $multicurrency_plugin // Make sure a supported multicurrency plugin is activated.
-			&& ! empty( $currency ) // Make sure the customer currency is set.
-			&& $wc_currency !== $currency // Make sure the customer currency is not the default currency.
-		) {
-			/**
-			 * Update shipping rates for multicurrency.
-			 *
-			 * @param array           $rate_info The rate response information.
-			 * @param string          $currency  The customer currency.
-			 * @param WP_REST_Request $request   The request object.
-			 *
-			 * @return array
-			 */
-			$rate_info = apply_filters(
-				"fastwc_update_shipping_rate_for_multicurrency_{$multicurrency_plugin}",
-				$rate_info,
-				$currency,
-				$request
-			);
-		}
+	if (
+		false === $multicurrency_disabled
+		&& ! empty( $currency ) // Make sure the customer currency is set.
+		&& $wc_currency !== $currency // Make sure the customer currency is not the default currency.
+	) {
+		/**
+		 * Update shipping rates for multicurrency.
+		 *
+		 * @param array           $rate_info The rate response information.
+		 * @param string          $currency  The customer currency.
+		 * @param WP_REST_Request $request   The request object.
+		 *
+		 * @return array
+		 */
+		$rate_info = apply_filters(
+			'fastwc_update_shipping_rate_for_multicurrency',
+			$rate_info,
+			$currency,
+			$request
+		);
 	}
 
 	return $rate_info;
